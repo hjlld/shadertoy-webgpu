@@ -14,7 +14,9 @@
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "types": [ "@webgpu/types" ],
-    "strictPropertyInitialization": false
+    "strictPropertyInitialization": false,
+    "declaration": true,
+    "declarationDir": "./dist"
   },
   "include": ["./lib", "./src"]
 }

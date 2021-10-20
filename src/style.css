@@ -4,8 +4,17 @@
   -moz-osx-font-smoothing: grayscale;
   text-align: center;
   color: #2c3e50;
-  margin-top: calc( ( 100vh - 40vw ) / 2);
-  margin-left: 10vw;
-  width: 80vw;
-  height: 40vw;
+  /* margin-top: calc( ( 100vh - 40vw ) / 2);
+  margin-left: 10vw; */
+  margin: 0;
+  padding: 0;
+  width: 50vw;
+  height: 50vh;
+}
+html, body {
+  width: 100vw;
+  height: 100vh;
+  margin: 5em;
+  padding: 0;
+  overflow: hidden;
 }

@@ -1,6 +1,6 @@
 # Shadertoy-WebGPU
 
-A Shadertoy implementation via WebGPU.
+A Shadertoy renderer via WebGPU.
 
 ## Dev
 
@@ -10,4 +10,4 @@ A Shadertoy implementation via WebGPU.
 
 ## Note
 
-Now only support `iResolution`, `iMouse`, `iTime` as uniforms.
+Now only support `iResolution`, `iMouse`, `iTime` as uniforms, neither support iChannel or multiple renderpass.

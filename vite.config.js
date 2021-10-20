@@ -7,19 +7,19 @@ module.exports = defineConfig({
     lib: {
       entry: path.resolve(__dirname, 'lib/Shadertoy.ts'),
       formats: ['es'],
-      fileName: () => 'ShadertoyWebGPU.js',
-      name: 'ShadertoyWebGPU'
+      fileName: () => 'Shadertoy.js',
     },
     rollupOptions: {
-      input: 'lib/Shadertoy.ts',
-      output: {
-        dir: 'dist',
-      },
+      // input: 'lib/Shadertoy.ts',
+      // output: {
+      //   dir: 'dist',
+      // },
+      external: [ path.resolve(__dirname, 'node_modules/@webgpu/glslang/dist/web-devel-onefile/glslang.js')],
       plugins: [
         typescript({
           declaration: true,
           declarationDir: path.resolve(__dirname, 'dist'),
-          exclude: [ path.resolve(__dirname, 'node_modules/**'), path.resolve(__dirname, 'src') ],
+          exclude: [ path.resolve(__dirname, 'node_modules/**'), path.resolve(__dirname, 'src/**') ]
         })
       ]
     }
