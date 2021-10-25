@@ -254,22 +254,25 @@ export class Shadertoy {
                 const input = renderpass.inputs[ j ];
                 const src = this.userDefinedChannelUrls[ j ];
                 const originSrc = `https://www.shadertoy.com${input.src}`;
-                console.log( `Find input media: ${originSrc}`);
+                console.log( `Find input media: ${originSrc}, due to Shadertoy's CORS policy we cannot read it directly. So before calling GetCodeByID(), you should download it and call SetInputMedia(yourMediaUrl) in sequence to set media resources.`);
                 const data = await this._FetchChannelMedia( src );
-                console.log(j, data)
                 const sampler = this.device.createSampler({
 
                     minFilter: input.sampler.filter,
                     magFilter: input.sampler.filter,
+                    addressModeU: 'clamp-to-edge',
+                    addressModeV: 'clamp-to-edge',
+                    addressModeW: 'repeat',
+                    maxAnisotropy: 1
 
                 });
 
                 const texture = this.device.createTexture({
                     size: {
-                        width: data.byteLength,
+                        width: 512,
                         height: 2
                     },
-                    format: 'r8uint',
+                    format: 'r8unorm',
                     usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
                 });
 
@@ -331,29 +334,29 @@ export class Shadertoy {
                 binding: i * 2 + 1,
                 visibility: GPUShaderStage.FRAGMENT,
                 sampler: { type: 'filtering' }
-
+                
             };
 
             const textureEntry: GPUBindGroupLayoutEntry = {
 
                 binding: i * 2 + 2,
                 visibility: GPUShaderStage.FRAGMENT,
-                texture: { sampleType: 'uint' }
+                texture: { sampleType: 'float' }
 
             }
 
             layoutEntries.push( samplerEntry, textureEntry );
 
-            const buffer = this._CreateGPUBuffer( new Uint8ClampedArray( channel.data ), GPUBufferUsage.COPY_DST );
+            const buffer = this._CreateGPUBuffer( new Uint8Array( channel.data ), GPUBufferUsage.COPY_SRC );
 
             const size: GPUExtent3DStrict = {
 
-                width: channel.data.byteLength,
-                height: 2
+                width: 512,
+                height: 2,
 
             }
 
-            textureCommandEncoder.copyBufferToTexture( { buffer }, { texture: channel.texture }, size );
+            textureCommandEncoder.copyBufferToTexture( { buffer, bytesPerRow: 512 * 4 }, { texture: channel.texture }, size );
 
         }
 
@@ -546,7 +549,13 @@ export class Shadertoy {
 
     private _ParseShader( shader: string ) {
 
-        return `${ fxCodeHeader( this.channels ) }${ shader }${ fxCodeMain }`;
+        this.channels.forEach( ( channel: iChannel, i: number) => {
+
+            shader = shader.replaceAll( new RegExp(`iChannel${i}`, 'g'), `sampler2D(${channel.name}_tex, ${channel.name}_sampler)` );
+
+        });
+
+        return `${ fxCodeHeader( this.channels ) }${ shader }${ fxCodeMain( this.channels ) }`;
 
     }
 
@@ -578,20 +587,26 @@ export class Shadertoy {
 
         const audioContext = new AudioContext();
         const audioBuffer = await audioContext.decodeAudioData( buffer );
-        const [ left, right ] =  [ audioBuffer.getChannelData( 0 ), audioBuffer.getChannelData( 1 ) ]
+        const right = audioBuffer.getChannelData( 1 );
 
+        return right.buffer;
+
+        // No need, Shadertoy only use the second channel.
         // interleaved
-        const interleaved = new Float32Array(left.length + right.length)
 
-        for (let src = 0, dst = 0; src < left.length; src ++, dst += 2 ) {
+        // const [ left, right ] =  [ audioBuffer.getChannelData( 0 ), audioBuffer.getChannelData( 1 ) ];
 
-          interleaved[ dst ] = left[src];
-          interleaved[ dst + 1 ] = right[src];
+        // const interleaved = new Float32Array(left.length + right.length)
 
-        }
+        // for (let src = 0, dst = 0; src < left.length; src ++, dst += 2 ) {
+
+        //   interleaved[ dst ] = left[src];
+        //   interleaved[ dst + 1 ] = right[src];
+
+        // }
         
-        return interleaved.buffer;
-
+        // return interleaved.buffer; 
+        
     }
 
     private _FetchChannelMedia( url: string ) {
@@ -608,7 +623,15 @@ export class Shadertoy {
 
         .then( buffer => {
 
-            return this._DecodeMp3( buffer );
+            if ( url.endsWith( 'mp3' ) ) {
+
+                return this._DecodeMp3( buffer );
+
+            } else {
+
+                return buffer;
+
+            }
 
         })
 
