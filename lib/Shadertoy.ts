@@ -43,9 +43,10 @@ interface ShadertoyResponseShader {
 interface iChannel extends iChannelOptions {
 
     src: string,
-    data: ArrayBuffer,
+    data?: ArrayBuffer,
     sampler: GPUSampler,
-    texture: GPUTexture
+    texture: GPUTexture,
+    ctype: string
 }
 
 type TypedArray = Float32Array | Float64Array | Uint8Array | Uint8ClampedArray | Int8Array | Int16Array | Int32Array;
@@ -75,6 +76,13 @@ export class Shadertoy {
     public channels: iChannel[] = [];
 
     public userDefinedChannelUrls: string[] = [];
+
+    public static readonly CTYPE = {
+
+        MUSIC: 'music',
+        TEXTURE: 'texture',
+
+    };
 
     private _uniformBuffer: GPUBuffer;
 
@@ -254,40 +262,97 @@ export class Shadertoy {
                 const input = renderpass.inputs[ j ];
                 const src = this.userDefinedChannelUrls[ j ];
                 const originSrc = `https://www.shadertoy.com${input.src}`;
-                console.log( `Find input media: ${originSrc}, due to Shadertoy's CORS policy we cannot read it directly. So before calling GetCodeByID(), you should download it and call SetInputMedia(yourMediaUrl) in sequence to set media resources.`);
-                const data = await this._FetchChannelMedia( src );
-                const sampler = this.device.createSampler({
 
-                    minFilter: input.sampler.filter,
-                    magFilter: input.sampler.filter,
-                    addressModeU: 'clamp-to-edge',
-                    addressModeV: 'clamp-to-edge',
-                    addressModeW: 'repeat',
-                    maxAnisotropy: 1
+                console.warn( `Find input media: ${originSrc}, due to Shadertoy's CORS policy we cannot read it directly. So before calling GetCodeByID(), you should download it (simply click the url) and call SetInputMedia(yourMediaUrl) in sequence to set media resources.`);
 
-                });
+                const ctype = input.ctype;
 
-                const texture = this.device.createTexture({
-                    size: {
-                        width: 512,
-                        height: 2
-                    },
-                    format: 'r8unorm',
-                    usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
-                });
+                switch ( ctype ) {
 
-                const channel: iChannel = {
+                    case Shadertoy.CTYPE.MUSIC: {
 
-                    name: `iChannel${input.channel}`,
-                    type: 'sampler2D',
-                    src,
-                    data,
-                    sampler,
-                    texture
+                        const raw = await this._Fetch( src ).then( res => res.arrayBuffer() );
 
-                };
+                        const audioData = await this._DecodeAudio( raw );
+        
+                        const sampler = this.device.createSampler({
+        
+                            minFilter: input.sampler.filter,
+                            magFilter: input.sampler.filter,
+                            addressModeU: 'clamp-to-edge',
+                            addressModeV: 'clamp-to-edge',
+                            addressModeW: 'repeat',
+                            maxAnisotropy: 1,
+                            mipmapFilter: input.sampler.filter
+        
+                        });
+        
+                        const texture = this.device.createTexture({
 
-                this.channels.push( channel );
+                            size: {
+                                width: 512,
+                                height: 2
+                            },
+                            format: 'r8unorm',
+                            usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+
+                        });
+
+                        const channel: iChannel = {
+
+                            name: `iChannel${input.channel}`,
+                            type: 'sampler2D',
+                            src,
+                            data: audioData,
+                            sampler,
+                            texture, 
+                            ctype
+        
+                        };
+        
+                        this.channels.push( channel );
+
+                        break;
+
+                    }
+                        
+                    case Shadertoy.CTYPE.TEXTURE: {
+
+                        if ( !( [ 'nearest', 'linear' ].includes( input.sampler.filter ) ) ) {
+
+                            input.sampler.filter = 'linear';
+
+                        } 
+
+                        const { texture, sampler } = await this._LoadTexture( src, input.sampler.filter );
+
+                        const channel: iChannel = {
+
+                            name: `iChannel${input.channel}`,
+                            type: 'sampler2D',
+                            src,
+                            sampler,
+                            texture, 
+                            ctype
+        
+                        };
+        
+                        this.channels.push( channel );
+
+                        break;
+                    }
+                
+                    default: {
+
+                        break;
+                    }
+
+                }
+
+
+
+
+
 
             }
 
@@ -300,8 +365,6 @@ export class Shadertoy {
     public SetCode( code: string ) {
 
         const parsed = this._ParseShader( code );
-
-        console.log(parsed)
 
         this.shadertoyCode = parsed;
 
@@ -329,6 +392,38 @@ export class Shadertoy {
 
             const channel = this.channels[ i ];
 
+            switch ( channel.ctype ) {
+
+                case Shadertoy.CTYPE.MUSIC: {
+
+                    const buffer = this._CreateGPUBuffer( new Uint8Array( channel.data! ), GPUBufferUsage.COPY_SRC );
+
+                    const size: GPUExtent3DStrict = {
+        
+                        width: 512,
+                        height: 2,
+        
+                    }
+        
+                    textureCommandEncoder.copyBufferToTexture( { buffer, bytesPerRow: 512 * 4 }, { texture: channel.texture }, size );
+
+                    break;
+                }
+                    
+                case Shadertoy.CTYPE.TEXTURE: {
+
+
+
+
+                    break;
+
+                }
+            
+                default:
+                    break;
+
+            }
+
             const samplerEntry: GPUBindGroupLayoutEntry = {
 
                 binding: i * 2 + 1,
@@ -347,16 +442,7 @@ export class Shadertoy {
 
             layoutEntries.push( samplerEntry, textureEntry );
 
-            const buffer = this._CreateGPUBuffer( new Uint8Array( channel.data ), GPUBufferUsage.COPY_SRC );
 
-            const size: GPUExtent3DStrict = {
-
-                width: 512,
-                height: 2,
-
-            }
-
-            textureCommandEncoder.copyBufferToTexture( { buffer, bytesPerRow: 512 * 4 }, { texture: channel.texture }, size );
 
         }
 
@@ -555,7 +641,7 @@ export class Shadertoy {
 
         });
 
-        return `${ fxCodeHeader( this.channels ) }${ shader }${ fxCodeMain( this.channels ) }`;
+        return `${ fxCodeHeader( this.channels ) }${ shader }${ fxCodeMain() }`;
 
     }
 
@@ -583,7 +669,7 @@ export class Shadertoy {
 
     }
 
-    private async _DecodeMp3( buffer: ArrayBuffer ): Promise<ArrayBuffer>{
+    private async _DecodeAudio( buffer: ArrayBuffer ): Promise<ArrayBuffer>{
 
         const audioContext = new AudioContext();
         const audioBuffer = await audioContext.decodeAudioData( buffer );
@@ -609,7 +695,7 @@ export class Shadertoy {
         
     }
 
-    private _FetchChannelMedia( url: string ) {
+    private _Fetch( url: string ): Promise<Response> {
 
         return fetch( url )
 
@@ -617,21 +703,7 @@ export class Shadertoy {
 
             if ( res.status >= 400 ) throw new Error( `Bad response from server: ${res.statusText}`);
 
-            return res.arrayBuffer();
-
-        })
-
-        .then( buffer => {
-
-            if ( url.endsWith( 'mp3' ) ) {
-
-                return this._DecodeMp3( buffer );
-
-            } else {
-
-                return buffer;
-
-            }
+            return res;
 
         })
 
@@ -662,4 +734,83 @@ export class Shadertoy {
         return this.__iUniformArray;
 
     }
+
+    private _LoadTexture( url: string, filter: GPUFilterMode ) {
+
+        let image = new Image();
+
+        image.src = url;
+
+        return image.decode()
+
+        .then( () => {
+
+            return createImageBitmap( image );
+
+        })
+
+        .then( ( bitmap: ImageBitmap ) => {
+
+            let texture = this.device.createTexture( {
+
+                size: {
+
+                    width: image.naturalWidth,
+
+                    height: image.naturalHeight,
+
+                    depthOrArrayLayers: 1
+
+                },
+
+                format: 'rgba8unorm',
+
+                usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
+
+            } );
+
+            let source: GPUImageCopyExternalImage = {
+
+                source: bitmap
+
+            };
+
+            let destination: GPUImageCopyTexture = {
+
+                texture: texture
+
+            };
+
+            let copySize: GPUExtent3D = {
+
+                width: image.naturalWidth,
+
+                height: image.naturalHeight,
+
+                depthOrArrayLayers: 1
+
+            };
+
+            this.device.queue.copyExternalImageToTexture( source, destination, copySize );
+
+            bitmap.close();
+
+            let sampler = this.device.createSampler( {
+
+                magFilter: filter,
+
+                minFilter: filter,
+
+                mipmapFilter: filter,
+
+                maxAnisotropy: 1
+
+            } );
+
+            return { texture, sampler };
+
+        } );
+
+    }
+
 }

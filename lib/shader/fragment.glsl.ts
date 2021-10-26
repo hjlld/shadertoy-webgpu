@@ -6,10 +6,7 @@ export interface iChannelOptions {
 }
 
 export const fxCodeHeader = ( channels: iChannelOptions[] = [] ) => {
-
-console.log(channels)
-
-const iChannelsCode = channels.map( ( channel: iChannelOptions, i: number ) => {
+    const iChannelsCode = channels.map( ( channel: iChannelOptions, i: number ) => {
     return `layout(binding = ${i * 2 + 1}) uniform sampler ${channel.name}_sampler;
 layout(binding = ${i * 2 + 2}) uniform texture2D ${channel.name}_tex;
 `;
@@ -32,12 +29,7 @@ layout(location = 0) out vec4 outColor;
 
 
 
-export const fxCodeMain = ( channels: iChannelOptions[] = [] ) => {
-
-// const iChannelsCode = channels.map( ( channel: iChannelOptions ) => {
-//     return `sampler2D ${channel.name} = sampler2D(${channel.name}_tex, ${channel.name}_sampler);`;
-// }).join('\n');
-    
+export const fxCodeMain = () => {
 
 return `void main(){
     vec4 shaderToyColor;
