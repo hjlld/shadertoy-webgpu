@@ -1,20 +1,24 @@
-import vxCode from './shader/vertex.wgsl';
-import { fxCodeHeader, fxCodeMain, iChannelOptions } from './shader/fragment.glsl';
 import glslangModule, { Glslang } from '@webgpu/glslang/dist/web-devel-onefile/glslang';
+import { fxCodeHeader, fxCodeMain, iChannelOptions } from './shader/fragment.glsl';
+import vxCode from './shader/vertex.wgsl';
 
-type boolString = "true" | "false";
+type TypedArray = Float32Array | Float64Array | Uint8Array | Uint8ClampedArray | Int8Array | Int16Array | Int32Array;
+type ShadertoyRenderpassName = 'Common' | 'Buffer A' | 'Buffer B' | 'Buffer C' | 'Buffer D' | 'Image';
+type BoolString = "true" | "false";
+type ShadertoyRenderpassType = 'common' | 'image' | 'buffer';
+type ShadertoyInputCtype = 'music' | 'texture';
 
 interface ShadertoyResponseInput {
 
     channel: number,
-    ctype: string,
+    ctype: ShadertoyInputCtype,
     id: number,
     published: 1 | 0,
     sampler: {
         filter: GPUFilterMode,
         internal: string,
-        srgb: boolString,
-        vflip: boolString,
+        srgb: BoolString,
+        vflip: BoolString,
         wrap: string
     },
     src: string
@@ -28,7 +32,7 @@ interface ShadertoyResponseRenderpass {
     inputs: ShadertoyResponseInput[],
     name: ShadertoyRenderpassName,
     outputs: any[],
-    type: string
+    type: ShadertoyRenderpassType
 
 }
 
@@ -40,30 +44,13 @@ interface ShadertoyResponseShader {
 
 }
 
-interface iChannel extends iChannelOptions {
+interface renderpassData {
 
-    src: string,
-    data?: ArrayBuffer,
-    sampler: GPUSampler,
-    texture: GPUTexture,
-    ctype: string,
+    renderBundle: GPURenderBundle,
+    renderTarget: GPUTexture | GPUCanvasContext,
+    id: number
 
 }
-
-type ShadertoyRenderpassName = 'Common' | 'Buffer A' | 'Buffer B' | 'Buffer C' | 'Buffer D' | 'Image';
-
-interface RenderpassNames {
-
-    COMMON: ShadertoyRenderpassName,
-    BUFFER_A: ShadertoyRenderpassName,
-    BUFFER_B: ShadertoyRenderpassName,
-    BUFFER_C: ShadertoyRenderpassName,
-    BUFFER_D: ShadertoyRenderpassName,
-    IMAGE: ShadertoyRenderpassName
-
-}
-
-type TypedArray = Float32Array | Float64Array | Uint8Array | Uint8ClampedArray | Int8Array | Int16Array | Int32Array;
 
 export class Shadertoy {
 
@@ -85,42 +72,13 @@ export class Shadertoy {
 
     public shadertoyCode: string;
 
+    public renderpasses: Map<ShadertoyRenderpassName, renderpassData> = new Map();
+
     public glslCompiler: Glslang;
 
-    public renderpassCode: Map<ShadertoyRenderpassName, string> = new  Map([ 
+    public inputMedia: Map<ShadertoyRenderpassName, string[]> = new Map();
 
-        [ 'Buffer A', '' ],
-        [ 'Buffer B', '' ],
-        [ 'Buffer C', '' ],
-        [ 'Buffer D', '' ],
-        [ 'Image',    '' ],
-
-    ]);
-
-    public renderTargets: Map<ShadertoyRenderpassName, GPUTexture> = new Map();
-
-    public channels: Map<ShadertoyRenderpassName, iChannel[]> = new Map([ 
-
-        [ 'Buffer A', [] ],
-        [ 'Buffer B', [] ],
-        [ 'Buffer C', [] ],
-        [ 'Buffer D', [] ],
-        [ 'Image',    [] ],
-
-    ]);
-
-    public userDefinedChannelUrls: Map<ShadertoyRenderpassName, string[]> = new Map([ 
-
-        [ 'Common',   [] ],
-        [ 'Buffer A', [] ],
-        [ 'Buffer B', [] ],
-        [ 'Buffer C', [] ],
-        [ 'Buffer D', [] ],
-        [ 'Image',    [] ],
-
-    ]);
-
-    public static readonly RENDERPASS: RenderpassNames = {
+    public static readonly RENDERPASS: { [key: string]: ShadertoyRenderpassName } = {
 
         COMMON: 'Common',
         BUFFER_A: 'Buffer A',
@@ -130,27 +88,6 @@ export class Shadertoy {
         IMAGE: 'Image'
 
     };
-
-    public static readonly CTYPE = {
-
-        MUSIC: 'music',
-        TEXTURE: 'texture',
-
-    };
-
-    public static readonly RENDERPASS_TYPE = {
-
-        IMAGE: 'image',
-        BUFFER: 'buffer',
-        COMMON: 'common'
-
-    };
-
-    private get _renderTargets(): GPUTexture[] {
-
-        return Array.from( this.renderTargets.values() );
-
-    }
 
     private _commonCode: string = '';
 
@@ -187,6 +124,8 @@ export class Shadertoy {
 
     private _iMouseArray: Float32Array = new Float32Array( [ 0, 0, 0, 0 ] );
 
+    private _iFrameArray: Float32Array = new Float32Array( [ 0 ] );
+
     private __iUniformArray: Float32Array;
 
     private get _iUniformArray(): Float32Array {
@@ -196,21 +135,11 @@ export class Shadertoy {
             this._iResolutionArray, 
             this._iTimeArray,
             this._iMouseArray,
+            this._iFrameArray
 
         );
 
     }
-
-    private _vertexArray = new Float32Array([
-
-        -1.0,  1.0,  0.0,
-        -1.0, -1.0,  0.0,
-         1.0, -1.0,  0.0,
-         1.0,  1.0,  0.0,
-        -1.0,  1.0,  0.0,
-         1.0, -1.0,  0.0,
-
-    ]);
 
     private _raf: number;
 
@@ -254,12 +183,6 @@ export class Shadertoy {
 
         this.appKey = appKey;
         
-    }
-
-    public SetInputMedia( renderpass: ShadertoyRenderpassName, ...url: string[]) {
-
-        this.userDefinedChannelUrls.get( renderpass )!.push( ...url );
-
     }
 
     public async InitWebGPU() {
@@ -306,7 +229,7 @@ export class Shadertoy {
 
     }
 
-    public GetCodeByID( id: string ) {
+    public async InitShaderByID( id: string ) {
 
         return fetch( `https://www.shadertoy.com/api/v1/shaders/${id}?key=${this.appKey}` )
 
@@ -320,25 +243,72 @@ export class Shadertoy {
 
         .then( async data => {
 
+            if ( data.Error ) throw new Error( data.Error );
+
+            if ( !this._uniformBuffer ) {
+
+                this._uniformBuffer = this._CreateGPUBuffer( this._iUniformArray, GPUBufferUsage.UNIFORM );
+    
+            }
+
             const shader = data.Shader as ShadertoyResponseShader;
 
-            for ( let i = 0; i < shader.renderpass.length; i ++ ) {
+            for ( const renderpass of shader.renderpass ) {
 
-                const renderpass = shader.renderpass[ i ];
-                const code = renderpass.code;
                 let name = renderpass.name;
+
                 const type = renderpass.type;
 
-                // Generally shadertoy's renderpass has a name same as its type but with first letter in uppercase
-                // Sometime it does not have a name or have a invalid name
-                // So correct it here
                 if ( !( Object.values( Shadertoy.RENDERPASS ).includes( name ) ) ) {
 
                     name = type.charAt( 0 ).toUpperCase() + type.slice( 1 ) as ShadertoyRenderpassName;
 
                 }
 
-                if ( name === Shadertoy.RENDERPASS.COMMON ) {
+            }
+
+            console.log( this._SortRenderpass( shader.renderpass ) );
+
+            for ( const renderpass of shader.renderpass ) {
+
+                let binding = 0;
+
+                const bundleEncoder = this.device.createRenderBundleEncoder({
+
+                    colorFormats: [ this.format ]
+    
+                });
+    
+                const layoutEntries: GPUBindGroupLayoutEntry[] = [{
+    
+                    binding,
+                    visibility: GPUShaderStage.FRAGMENT,
+                    buffer: { type: 'uniform' }
+    
+                }];
+
+                const groupEntries: GPUBindGroupEntry[] = [ 
+
+                    {
+                        binding,
+                        resource: { buffer: this._uniformBuffer }
+                    }
+
+                ];
+
+                const code = renderpass.code;
+
+                let name = renderpass.name;
+
+                const type = renderpass.type;
+
+                if ( !( Object.values( Shadertoy.RENDERPASS ).includes( name ) ) ) {
+
+                    name = type.charAt( 0 ).toUpperCase() + type.slice( 1 ) as ShadertoyRenderpassName;
+
+                }
+
+                if ( name === 'Common' ) {
 
                     this._commonCode = code;
 
@@ -346,428 +316,472 @@ export class Shadertoy {
 
                 }
 
-                const mediaUrls = this.userDefinedChannelUrls.get( name )!;
+                const channels: iChannelOptions[] = [];
 
-                for ( let j = 0; j < renderpass.inputs.length; j ++ ) {
-
-                    const input = renderpass.inputs[ j ];
-                    
-                    const src = mediaUrls[ j ];
-
-                    const originSrc = `https://www.shadertoy.com${input.src}`;
-
-                    console.warn( `Find input media: ${originSrc}, due to Shadertoy's CORS policy we cannot read it directly. So before calling GetCodeByID(), you should download it (simply click the url) and call SetInputMedia(yourMediaUrl) in sequence to set media resources.`);
+                for ( const input of renderpass.inputs ) {
 
                     const ctype = input.ctype;
 
-                    switch ( ctype ) {
+                    const src = this.GetInputMedia( name, input.channel );
 
-                        case Shadertoy.CTYPE.MUSIC: {
+                    const originSrc = input.src;
 
-                            const raw = await this._Fetch( src ).then( res => res.arrayBuffer() );
+                    console.warn( `Find input media: https://www.shadertoy.com${originSrc}, due to Shadertoy's CORS policy we cannot read it directly. So before calling InitShaderByID(), you should download it (simply click the url) and call SetInputMedia(yourMediaUrl) in sequence to set media resources.`);
 
-                            const audioData = await this._DecodeAudio( raw );
-            
-                            const sampler = this.device.createSampler({
-            
-                                minFilter: input.sampler.filter,
-                                magFilter: input.sampler.filter,
-                                addressModeU: 'clamp-to-edge',
-                                addressModeV: 'clamp-to-edge',
-                                addressModeW: 'repeat',
-                                maxAnisotropy: 1,
-                                mipmapFilter: input.sampler.filter
-            
-                            });
-            
-                            const texture = this.device.createTexture({
+                    if ( ctype === 'music' ) {
 
-                                size: {
-                                    width: 512,
-                                    height: 2
-                                },
-                                format: 'r8unorm',
-                                usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+                        if ( !src ) throw new Error( 'Media url not found!' );
 
-                            });
+                        const raw = await this._Fetch( src ).then( res => res.arrayBuffer() );
 
-                            const textureCommandEncoder = this.device.createCommandEncoder();
+                        const audioData = await this._DecodeAudio( raw );
 
-                            const buffer = this._CreateGPUBuffer( new Uint8Array( audioData ), GPUBufferUsage.COPY_SRC );
-
-                            const size: GPUExtent3DStrict = {
-                
-                                width: 512,
-                                height: 2,
-                
-                            }
-                
-                            textureCommandEncoder.copyBufferToTexture( { buffer, bytesPerRow: 512 * 4 }, { texture }, size );
-        
-                            this.device.queue.submit( [ textureCommandEncoder.finish() ] );
-
-                            const channel: iChannel = {
-
-                                name: `iChannel${input.channel}`,
-                                type: 'sampler2D',
-                                src,
-                                data: audioData,
-                                sampler,
-                                texture, 
-                                ctype
-            
-                            };
-
-                            this.channels.get( name )!.push( channel );
-
-                            break;
-
-                        }
+                        const layoutSamplerEntry: GPUBindGroupLayoutEntry = {
+    
+                            binding: ++binding,
+                            visibility: GPUShaderStage.FRAGMENT,
+                            sampler: { type: 'filtering' }
                             
-                        case Shadertoy.CTYPE.TEXTURE: {
-
-                            if ( !( [ 'nearest', 'linear' ].includes( input.sampler.filter ) ) ) {
-
-                                input.sampler.filter = 'linear';
-
-                            } 
-
-                            const { texture, sampler } = await this._LoadTexture( src, input.sampler.filter );
-
-                            const channel: iChannel = {
-
-                                name: `iChannel${input.channel}`,
-                                type: 'sampler2D',
-                                src,
-                                sampler,
-                                texture, 
-                                ctype
+                        };
             
+                        const layoutTextureEntry: GPUBindGroupLayoutEntry = {
+            
+                            binding: ++binding,
+                            visibility: GPUShaderStage.FRAGMENT,
+                            texture: { sampleType: 'float' }
+            
+                        }
+
+                        layoutEntries.push( layoutSamplerEntry, layoutTextureEntry );
+
+                        const sampler = this.device.createSampler({
+        
+                            minFilter: input.sampler.filter,
+                            magFilter: input.sampler.filter,
+                            addressModeU: 'clamp-to-edge',
+                            addressModeV: 'clamp-to-edge',
+                            addressModeW: 'repeat',
+                            maxAnisotropy: 1,
+                            mipmapFilter: input.sampler.filter
+        
+                        });
+        
+                        const texture = this.device.createTexture({
+
+                            size: {
+                                width: 512,
+                                height: 2
+                            },
+                            format: 'r8unorm',
+                            usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING
+
+                        });
+
+                        const groupSamplerEntry: GPUBindGroupEntry = {
+
+                            binding: layoutSamplerEntry.binding,
+                            resource: sampler
+        
+                        };
+        
+                        const groupTextureEntry: GPUBindGroupEntry = {
+        
+                            binding: layoutTextureEntry.binding,
+                            resource: texture.createView()
+        
+                        };
+
+                        groupEntries.push( groupSamplerEntry, groupTextureEntry );
+
+                        const textureCommandEncoder = this.device.createCommandEncoder();
+
+                        const buffer = this._CreateGPUBuffer( new Uint8Array( audioData ), GPUBufferUsage.COPY_SRC );
+
+                        const size: GPUExtent3DStrict = {
+            
+                            width: 512,
+                            height: 2,
+            
+                        }
+            
+                        textureCommandEncoder.copyBufferToTexture( { buffer, bytesPerRow: 512 * 4 }, { texture }, size );
+    
+                        this.device.queue.submit( [ textureCommandEncoder.finish() ] );
+
+                        const channel: iChannelOptions = {
+
+                            name: `iChannel${input.channel}`,
+                            samplerBinding: layoutSamplerEntry.binding,
+                            textureBinding: layoutTextureEntry.binding
+
+                        }
+
+                        channels.push( channel );
+
+                    } else if ( ctype === 'texture' ) {
+
+                        if ( !src ) throw new Error( 'Media url not found!' );
+
+                        if ( !( [ 'linear', 'nearest' ].includes( input.sampler.filter ) ) ) {
+
+                            input.sampler.filter = 'linear';
+
+                        }
+
+                        const { texture, sampler } = await this._LoadTexture( src, input.sampler.filter )
+
+                        const layoutSamplerEntry: GPUBindGroupLayoutEntry = {
+    
+                            binding: ++binding,
+                            visibility: GPUShaderStage.FRAGMENT,
+                            sampler: { type: 'filtering' }
+                            
+                        };
+            
+                        const layoutTextureEntry: GPUBindGroupLayoutEntry = {
+            
+                            binding: ++binding,
+                            visibility: GPUShaderStage.FRAGMENT,
+                            texture: { sampleType: 'float' }
+            
+                        }
+
+                        layoutEntries.push( layoutSamplerEntry, layoutTextureEntry );
+
+                        const groupSamplerEntry: GPUBindGroupEntry = {
+
+                            binding: layoutSamplerEntry.binding,
+                            resource: sampler
+        
+                        };
+        
+                        const groupTextureEntry: GPUBindGroupEntry = {
+        
+                            binding: layoutTextureEntry.binding,
+                            resource: texture.createView()
+        
+                        };
+
+                        groupEntries.push( groupSamplerEntry, groupTextureEntry );
+
+                        const channel: iChannelOptions = {
+
+                            name: `iChannel${input.channel}`,
+                            samplerBinding: layoutSamplerEntry.binding,
+                            textureBinding: layoutTextureEntry.binding
+
+                        }
+
+                        channels.push( channel );
+
+                    } else if ( ctype === 'buffer') {
+
+                        if ( !( [ 'linear', 'nearest' ].includes( input.sampler.filter ) ) ) {
+
+                            input.sampler.filter = 'linear';
+
+                        }
+
+                        const wrapMode = input.sampler.wrap === 'clamp' ? 'clamp-to-edge' : 'repeat';
+                        
+                        const sampler = this.device.createSampler({
+        
+                            minFilter: input.sampler.filter,
+                            magFilter: input.sampler.filter,
+                            addressModeU: wrapMode,
+                            addressModeV: wrapMode,
+                            addressModeW: wrapMode,
+                            maxAnisotropy: 1,
+                            mipmapFilter: input.sampler.filter
+        
+                        });
+
+                        let texture: GPUTexture;
+
+                        const inputRenderpass = Array.from( this.renderpasses.values() ).find( renderpassData => renderpassData.id === input.id );
+
+                        if ( inputRenderpass ) {
+
+                            texture = inputRenderpass.renderTarget as GPUTexture;
+
+                        } else {
+
+                            const width = this.canvas.width;
+                            const height = this.canvas.height;
+
+                            const usage =  GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST;
+
+                            texture = this._CreateRenderTarget( usage );
+
+                            let blackData = new Float32Array({ length: width * height * 4 });
+
+                            for ( let i = 0; i < blackData.length; i += 4 ) {
+
+                                blackData[ i ] = 0.0;
+                                blackData[ i + 1 ] = 0.0;
+                                blackData[ i + 2 ] = 0.0;
+                                blackData[ i + 3 ] = 1.0;
+
+                            }
+
+                            let layout: GPUImageDataLayout = {
+    
+                                bytesPerRow: width * 4,
+                                rowsPerImage: height,
+                                offset: 0
+                
+                            };
+
+                            let destination: GPUImageCopyTexture = { texture };
+            
+                            let copySize: GPUExtent3D = {
+            
+                                width,
+                                height,
+                                depthOrArrayLayers: 1
+                
                             };
             
-                            this.channels.get( name )!.push( channel );
+                            this.device.queue.writeTexture( destination, blackData.buffer, layout, copySize );
 
-                            break;
                         }
-                    
-                        default: {
 
-                            break;
+                        const layoutSamplerEntry: GPUBindGroupLayoutEntry = {
+    
+                            binding: ++binding,
+                            visibility: GPUShaderStage.FRAGMENT,
+                            sampler: { type: 'filtering' }
+                            
+                        };
+            
+                        const layoutTextureEntry: GPUBindGroupLayoutEntry = {
+            
+                            binding: ++binding,
+                            visibility: GPUShaderStage.FRAGMENT,
+                            texture: { sampleType: 'float' }
+            
                         }
+
+                        layoutEntries.push( layoutSamplerEntry, layoutTextureEntry );
+
+                        const groupSamplerEntry: GPUBindGroupEntry = {
+
+                            binding: layoutSamplerEntry.binding,
+                            resource: sampler
+        
+                        };
+        
+                        const groupTextureEntry: GPUBindGroupEntry = {
+        
+                            binding: layoutTextureEntry.binding,
+                            resource: texture.createView()
+        
+                        };
+
+                        groupEntries.push( groupSamplerEntry, groupTextureEntry );
+
+                        const channel: iChannelOptions = {
+
+                            name: `iChannel${input.channel}`,
+                            samplerBinding: layoutSamplerEntry.binding,
+                            textureBinding: layoutTextureEntry.binding
+
+                        }
+
+                        channels.push( channel );
 
                     }
 
                 }
 
-                if ( name !== Shadertoy.RENDERPASS.COMMON ) {
+                const bindGroupLayout = this.device.createBindGroupLayout( { entries: layoutEntries } );
 
-                    const parsed = this._ParseShader( code, this.channels.get( name )! );
+                const pipelineLayout = this.device.createPipelineLayout({
+    
+                    bindGroupLayouts: [ bindGroupLayout ]
+    
+                });
+    
+                const vxModule = this.device.createShaderModule({
+    
+                    code: vxCode
+    
+                });
+    
+                console.log(this._ParseShader( code, channels ))
 
-                    this.renderpassCode.set( name, parsed );
+                const fxModule = this.device.createShaderModule({
+    
+                    code: this.glslCompiler.compileGLSL( this._ParseShader( code, channels ), 'fragment', false )
+    
+                });
 
-                }
+                const pipeline = await this.device.createRenderPipelineAsync({
 
+                    layout: pipelineLayout,
+    
+                    vertex: {
+    
+                        module: vxModule,
+                        entryPoint: 'main'
+                        
+                    },
+    
+                    fragment: {
+    
+                        module: fxModule,
+                        entryPoint: 'main',
+                        targets: [{
+    
+                            format: this.format
+    
+                        }]
+    
+                    },
+    
+                    primitive: {
+    
+                        topology: 'triangle-list'
+    
+                    }
+    
+                });
 
+                bundleEncoder.setPipeline( pipeline );
+
+                const bindGroup = this.device.createBindGroup( {
+
+                    layout: bindGroupLayout,
+
+                    entries: groupEntries
+
+                } );
+
+                bundleEncoder.setBindGroup( 0, bindGroup );
+
+                bundleEncoder.draw( 6 );
+
+                const renderBundle = bundleEncoder.finish();
+
+                renderBundle.label = name;
+
+                const renderTarget = name === 'Image' ? this.context : this._CreateRenderTarget();
+
+                this.renderpasses.set( name, { renderBundle, renderTarget, id: renderpass.outputs[ 0 ].id } );
+                
             }
 
         })
-
     }
 
-    public async InitRenderer() {
+    public GetInputMedia(renderpassName: ShadertoyRenderpassName, channel: number ) {
 
-        for ( const [ renderpassName, channels] of this.channels ) {
+        if ( !this.inputMedia.has( renderpassName ) ) return;
 
-            if ( channels.length === 0 ) {
+        const channels = this.inputMedia.get( renderpassName )!;
 
-                continue;
+        if ( !Array.isArray( channels ) ) return;
 
-            }
+        return channels[ channel ];
 
-            const bundleEncoder = this.device.createRenderBundleEncoder({
+    }
+    public SetInputMedia(renderpassName: ShadertoyRenderpassName, channel: number, url: string ) {
 
-                colorFormats: [ this.format ]
+        if ( !this.inputMedia.has( renderpassName ) ) {
 
-            });
-
-            const layoutEntries: GPUBindGroupLayoutEntry[] = [{
-
-                binding: 0,
-                visibility: GPUShaderStage.FRAGMENT,
-                buffer: { type: 'uniform' }
-
-            }];
-
-            for ( let i = 0; i < channels.length; i ++ ) {
-
-                const samplerEntry: GPUBindGroupLayoutEntry = {
-    
-                    binding: i * 2 + 1,
-                    visibility: GPUShaderStage.FRAGMENT,
-                    sampler: { type: 'filtering' }
-                    
-                };
-    
-                const textureEntry: GPUBindGroupLayoutEntry = {
-    
-                    binding: i * 2 + 2,
-                    visibility: GPUShaderStage.FRAGMENT,
-                    texture: { sampleType: 'float' }
-    
-                }
-    
-                layoutEntries.push( samplerEntry, textureEntry );
-    
-            }
-
-
-            const uniformGroupLayout = this.device.createBindGroupLayout( { entries: layoutEntries } );
-
-            const pipelineLayout = this.device.createPipelineLayout({
-
-                bindGroupLayouts: [ uniformGroupLayout ]
-
-            });
-
-            const vxModule = this.device.createShaderModule({
-
-                code: vxCode
-
-            });
-
-
-            const fxModule = this.device.createShaderModule({
-
-                code: this.glslCompiler.compileGLSL( this.renderpassCode.get( renderpassName )!, 'fragment', false )
-
-            });
-
-            const pipeline = await this.device.createRenderPipelineAsync({
-
-                layout: pipelineLayout,
-
-                vertex: {
-
-                    buffers: [
-
-                        {
-                            arrayStride: 4 * 3,
-                            attributes: [
-
-                                // position
-                                {
-
-                                    shaderLocation: 0,
-                                    offset: 0,
-                                    format: 'float32x3'
-
-                                }
-
-                            ],
-                            stepMode: 'vertex'
-
-                        }
-
-                    ],
-                    module: vxModule,
-                    entryPoint: 'main'
-                    
-                },
-
-                fragment: {
-
-                    module: fxModule,
-                    entryPoint: 'main',
-                    targets: [{
-
-                        format: this.format
-
-                    }]
-
-                },
-
-                primitive: {
-
-                    topology: 'triangle-list'
-
-                }
-
-            });
-
-            bundleEncoder.setPipeline( pipeline );
-
-            const vertexBuffer = this._CreateGPUBuffer( this._vertexArray, GPUBufferUsage.VERTEX );
-
-            bundleEncoder.setVertexBuffer( 0, vertexBuffer );
-
-            if ( !this._uniformBuffer ) {
-
-                this._uniformBuffer = this._CreateGPUBuffer( this._iUniformArray, GPUBufferUsage.UNIFORM );
-
-            }
-
-            const groupEntries: GPUBindGroupEntry[] = [ 
-
-                {
-
-                    binding: 0,
-                    resource: { buffer: this._uniformBuffer }
-
-                }
-
-            ];
-
-            for ( let i = 0; i < channels.length; i ++ ) {
-
-                const channel = channels[ i ];
-
-                const samplerEntry: GPUBindGroupEntry = {
-
-                    binding: i * 2 + 1,
-                    resource: channel.sampler
-
-                };
-
-                const textureEntry: GPUBindGroupEntry = {
-
-                    binding: i * 2 + 2,
-                    resource: channel.texture.createView()
-
-                };
-
-                groupEntries.push( samplerEntry, textureEntry );
-
-            }
-
-            let uniformBindGroup = this.device.createBindGroup( {
-
-                layout: uniformGroupLayout,
-
-                entries: groupEntries
-
-            } );
-
-            bundleEncoder.setBindGroup( 0, uniformBindGroup );
-
-            bundleEncoder.draw( 6 );
-
-            this.renderBundles.push( bundleEncoder.finish() );
-
-            let renderTarget = this.device.createTexture({
-
-                size: {
-
-                    width: this.canvas.width,
-
-                    height: this.canvas.height,
-
-                    depthOrArrayLayers: 1
-
-                },
-
-                format: 'rgba8unorm',
-
-                usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
-
-            });
-
-            this.renderTargets.set( renderpassName, renderTarget );
+            this.inputMedia.set( renderpassName, [] );
 
         }
 
+        const channels = this.inputMedia.get( renderpassName )!;
+
+        channels[ channel ] = url;
+
     }
 
-    public Render() {
+    public async Render() {
 
         this._raf = requestAnimationFrame( () => this.Render() );
 
         this.device.queue.writeBuffer( this._uniformBuffer, 0, this._iUniformArray );
+                
+        let i = 0;
 
-        const commandEncoder = this.device.createCommandEncoder();
+        for ( const renderpassData of this.renderpasses.values() ) {
 
-        const renderPassDescriptor : GPURenderPassDescriptor = {
+            this.device.pushErrorScope( 'validation' );
 
-            colorAttachments: []
+            const { renderBundle, renderTarget } = renderpassData;
 
-        };
+            const view = renderTarget instanceof GPUCanvasContext ? renderTarget.getCurrentTexture().createView() : renderTarget.createView();
 
-        for ( let i = 0; i < this.renderBundles.length; i ++ ) {
+            const commandEncoder = this.device.createCommandEncoder();
 
-            const colorAttachment: GPURenderPassColorAttachment = {
+            const renderPassDescriptor: GPURenderPassDescriptor = {
 
-                view: this._renderTargets[ i ].createView(),
-                loadValue: { r: 0, g: 0, b: 0, a: 1 },
-                storeOp: 'store'
+                colorAttachments: [{
+
+                    view,
+                    loadValue: { r: 0, g: 0, b: 0, a: 1 },
+                    storeOp: 'store'
+
+                }]
 
             };
 
-            ( renderPassDescriptor.colorAttachments as GPURenderPassColorAttachment[] ).push( colorAttachment );
+            const renderPassEncoder = commandEncoder.beginRenderPass( renderPassDescriptor );
 
+            renderPassEncoder.executeBundles( [ renderBundle ] );
+
+            renderPassEncoder.endPass();
+
+            this.device.queue.submit( [ commandEncoder.finish() ] );
+
+            await this.device.popErrorScope().then( ( error: GPUError | null ) => { 
+            
+                if ( error ) {
+    
+                    console.error( `Error at frame ${this._iFrameArray[ 0 ]}, renderpass ${i}`);
+                    console.error(error);
+    
+                    cancelAnimationFrame( this._raf );
+    
+                }
+            
+            });
+
+            i++;
         }
 
-        const renderPassEncoder = commandEncoder.beginRenderPass( renderPassDescriptor );
-
-        renderPassEncoder.executeBundles( this.renderBundles );
-
-        renderPassEncoder.endPass();
-
-        this.device.queue.submit( [ commandEncoder.finish() ] );
+        this._iFrameArray[ 0 ] = this._iFrameArray[ 0 ] + 1;
 
         this._lastFrameTime = performance.now();
 
     }
 
-    public StopRender( clearCache: boolean = true ) {
+    private _MergeUniformArrays( ...arrays: Float32Array[] ) {
 
-        cancelAnimationFrame( this._raf );
+        const length = arrays.reduce( ( pre: number, cur: Float32Array ) => {
 
-        if ( clearCache ) {
+            return pre + cur.length;
 
-            this._lastFrameTime = 0;
+        }, 0 );
+
+        if ( !this.__iUniformArray || this.__iUniformArray.length !== length ) {
+
+            this.__iUniformArray = new Float32Array( { length } );
 
         }
 
-    }
+        arrays.reduce( ( offset: number, cur: Float32Array ) => {
 
-    public Dispose() {
+            this.__iUniformArray.set( cur, offset );
 
-        this.device.destroy();
+            return offset + cur.length;
 
-    }
-
-    private _ParseShader( shader: string, channels: iChannel[] ) {
-
-        channels.forEach( ( channel: iChannel, i: number) => {
-
-            shader = shader.replaceAll( new RegExp(`iChannel${i}`, 'g'), `sampler2D(${channel.name}_tex, ${channel.name}_sampler)` );
-
-        });
-
-        return `${ fxCodeHeader( channels ) }${ this._commonCode }${ shader }${ fxCodeMain() }`;
-
-    }
-
-    private _CreateGPUBuffer( typedArray: TypedArray, usage: GPUBufferUsageFlags ) {
-
-        let gpuBuffer = this.device.createBuffer( {
-
-            size: typedArray.byteLength,
-
-            usage: usage | GPUBufferUsage.COPY_DST,
-
-            mappedAtCreation: true
-
-        } );
-
-        let constructor = typedArray.constructor as new ( buffer: ArrayBuffer ) => TypedArray;
-
-        let view = new constructor( gpuBuffer.getMappedRange() );
-
-        view.set( typedArray, 0 );
-
-        gpuBuffer.unmap();
-
-        return gpuBuffer;
+        }, 0 );
+        
+        return this.__iUniformArray;
 
     }
 
@@ -775,11 +789,13 @@ export class Shadertoy {
 
         const audioContext = new AudioContext();
         const audioBuffer = await audioContext.decodeAudioData( buffer );
+
+        // Shadertoy only use the second channel.
         const right = audioBuffer.getChannelData( 1 );
 
         return right.buffer;
 
-        // No need, Shadertoy only use the second channel.
+        // No need 
         // interleaved
 
         // const [ left, right ] =  [ audioBuffer.getChannelData( 0 ), audioBuffer.getChannelData( 1 ) ];
@@ -811,29 +827,57 @@ export class Shadertoy {
 
     }
 
-    private _MergeUniformArrays( ...arrays: Float32Array[] ) {
+    private _CreateGPUBuffer( typedArray: TypedArray, usage: GPUBufferUsageFlags ) {
 
-        const length = arrays.reduce( ( pre: number, cur: Float32Array ) => {
+        let gpuBuffer = this.device.createBuffer( {
 
-            return pre + cur.length;
+            size: typedArray.byteLength,
 
-        }, 0 );
+            usage: usage | GPUBufferUsage.COPY_DST,
 
-        if ( !this.__iUniformArray || this.__iUniformArray.length !== length ) {
+            mappedAtCreation: true
 
-            this.__iUniformArray = new Float32Array( { length } );
+        } );
 
-        }
+        let constructor = typedArray.constructor as new ( buffer: ArrayBuffer ) => TypedArray;
 
-        arrays.reduce( ( offset: number, cur: Float32Array ) => {
+        let view = new constructor( gpuBuffer.getMappedRange() );
 
-            this.__iUniformArray.set( cur, offset );
+        view.set( typedArray, 0 );
 
-            return offset + cur.length;
+        gpuBuffer.unmap();
 
-        }, 0 );
-        
-        return this.__iUniformArray;
+        return gpuBuffer;
+
+    }
+
+    private _CreateRenderTarget( usage: GPUTextureUsageFlags = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT ) {
+
+        return this.device.createTexture({
+
+            size: {
+
+                width: this.canvas.width,
+                height: this.canvas.height,
+                depthOrArrayLayers: 1
+
+            },
+            format: this.format,
+            usage
+
+        });
+
+    }
+
+    private _ParseShader( shader: string, channels: iChannelOptions[] ) {
+
+        channels.forEach( ( channel: iChannelOptions ) => {
+
+            shader = shader.replaceAll( new RegExp(channel.name, 'g'), `sampler2D(${channel.name}_tex, ${channel.name}_sampler)` );
+
+        });
+
+        return `${ fxCodeHeader( channels ) }${ this._commonCode }${ shader }\n${ fxCodeMain() }`;
 
     }
 
@@ -858,15 +902,11 @@ export class Shadertoy {
                 size: {
 
                     width: image.naturalWidth,
-
                     height: image.naturalHeight,
-
                     depthOrArrayLayers: 1
 
                 },
-
-                format: 'rgba8unorm',
-
+                format: this.format,
                 usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT
 
             } );
@@ -886,9 +926,7 @@ export class Shadertoy {
             let copySize: GPUExtent3D = {
 
                 width: image.naturalWidth,
-
                 height: image.naturalHeight,
-
                 depthOrArrayLayers: 1
 
             };
@@ -900,11 +938,8 @@ export class Shadertoy {
             let sampler = this.device.createSampler( {
 
                 magFilter: filter,
-
                 minFilter: filter,
-
                 mipmapFilter: filter,
-
                 maxAnisotropy: 1
 
             } );
@@ -912,6 +947,33 @@ export class Shadertoy {
             return { texture, sampler };
 
         } );
+
+    }
+
+    private _SortRenderpass( renderpasses: ShadertoyResponseRenderpass[] ) {
+
+        const nameAligned: ShadertoyRenderpassName[] = [ 'Common', 'Buffer A', 'Buffer B', 'Buffer C', 'Buffer D', 'Image' ];
+
+        renderpasses.sort( ( a, b ) => {
+
+            const idxA = nameAligned.indexOf( a.name );
+            const idxB = nameAligned.indexOf( b.name );
+            
+            return idxA - idxB;
+
+        });
+
+        for ( const renderpass of renderpasses ) {
+
+            renderpass.inputs.sort( ( a, b ) => {
+
+                return a.channel - b.channel;
+
+            });
+
+        }
+
+        return renderpasses;
 
     }
 
