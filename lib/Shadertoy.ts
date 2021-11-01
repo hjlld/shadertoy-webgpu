@@ -7,6 +7,8 @@ type ShadertoyRenderpassName = 'Common' | 'Buffer A' | 'Buffer B' | 'Buffer C' |
 type BoolString = "true" | "false";
 type ShadertoyRenderpassType = 'common' | 'image' | 'buffer';
 type ShadertoyInputCtype = 'music' | 'texture';
+type CopySoureGPUTexture = GPUTexture;
+type CopyTargetGPUTexture = GPUTexture;
 
 interface ShadertoyResponseInput {
 
@@ -88,6 +90,10 @@ export class Shadertoy {
         IMAGE: 'Image'
 
     };
+
+    private pendingToCopyTextures: Map<CopySoureGPUTexture, CopyTargetGPUTexture> = new Map();
+
+    private textures: Map<number, GPUTexture> = new Map();
 
     private _commonCode: string = '';
 
@@ -267,7 +273,7 @@ export class Shadertoy {
 
             }
 
-            console.log( this._SortRenderpass( shader.renderpass ) );
+            this._SortRenderpass( shader.renderpass );
 
             for ( const renderpass of shader.renderpass ) {
 
@@ -377,6 +383,8 @@ export class Shadertoy {
 
                         });
 
+                        this.textures.set( input.id, texture );
+
                         const groupSamplerEntry: GPUBindGroupEntry = {
 
                             binding: layoutSamplerEntry.binding,
@@ -428,7 +436,9 @@ export class Shadertoy {
 
                         }
 
-                        const { texture, sampler } = await this._LoadTexture( src, input.sampler.filter )
+                        const { texture, sampler } = await this._LoadTexture( src, input.sampler.filter );
+
+                        this.textures.set( input.id, texture );
 
                         const layoutSamplerEntry: GPUBindGroupLayoutEntry = {
     
@@ -513,18 +523,18 @@ export class Shadertoy {
 
                             texture = this._CreateRenderTarget( usage );
 
-                            let blackData = new Float32Array({ length: width * height * 4 });
+                            const blackData = new Uint8Array({ length: width * height * 4 });
 
                             for ( let i = 0; i < blackData.length; i += 4 ) {
 
                                 blackData[ i ] = 0.0;
                                 blackData[ i + 1 ] = 0.0;
                                 blackData[ i + 2 ] = 0.0;
-                                blackData[ i + 3 ] = 1.0;
+                                blackData[ i + 3 ] = 255.0;
 
                             }
 
-                            let layout: GPUImageDataLayout = {
+                            const layout: GPUImageDataLayout = {
     
                                 bytesPerRow: width * 4,
                                 rowsPerImage: height,
@@ -532,19 +542,21 @@ export class Shadertoy {
                 
                             };
 
-                            let destination: GPUImageCopyTexture = { texture };
+                            const destination: GPUImageCopyTexture = { texture };
             
-                            let copySize: GPUExtent3D = {
+                            const copySize: GPUExtent3D = {
             
                                 width,
                                 height,
                                 depthOrArrayLayers: 1
                 
                             };
-            
+
                             this.device.queue.writeTexture( destination, blackData.buffer, layout, copySize );
 
                         }
+
+                        this.textures.set( input.id, texture );
 
                         const layoutSamplerEntry: GPUBindGroupLayoutEntry = {
     
@@ -608,7 +620,7 @@ export class Shadertoy {
     
                 });
     
-                console.log(this._ParseShader( code, channels ))
+                //console.log(this._ParseShader( code, channels ))
 
                 const fxModule = this.device.createShaderModule({
     
@@ -665,7 +677,25 @@ export class Shadertoy {
 
                 renderBundle.label = name;
 
-                const renderTarget = name === 'Image' ? this.context : this._CreateRenderTarget();
+                let renderTarget: GPUTexture | GPUCanvasContext;
+
+                if ( name === 'Image' ) {
+
+                    renderTarget = this.context;
+
+                } else if ( this.textures.has( renderpass.outputs[ 0 ] .id ) ) {
+
+                    renderTarget = this._CreateRenderTarget();
+                    
+                    const target = this.textures.get( renderpass.outputs[ 0 ] .id )!;
+
+                    this.pendingToCopyTextures.set( renderTarget, target );
+
+                } else {
+
+                    renderTarget = this._CreateRenderTarget();
+
+                }
 
                 this.renderpasses.set( name, { renderBundle, renderTarget, id: renderpass.outputs[ 0 ].id } );
                 
@@ -749,6 +779,17 @@ export class Shadertoy {
                 }
             
             });
+
+            for ( const [ source, target ] of this.pendingToCopyTextures ) {
+
+                const commandEncoder = this.device.createCommandEncoder();
+
+                commandEncoder.copyTextureToTexture( { texture: source },  { texture: target }, { width: this.canvas.width, height: this.canvas.height } );
+
+                this.device.queue.submit( [ commandEncoder.finish() ] );
+
+            }
+            
 
             i++;
         }
@@ -851,7 +892,7 @@ export class Shadertoy {
 
     }
 
-    private _CreateRenderTarget( usage: GPUTextureUsageFlags = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT ) {
+    private _CreateRenderTarget( usage: GPUTextureUsageFlags = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC ) {
 
         return this.device.createTexture({
 
