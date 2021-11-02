@@ -929,6 +929,8 @@ export class Shadertoy {
 
         });
 
+        // shader = shader.replaceAll( new RegExp( 'sampler2D ', 'g' ), 'sampler ');
+
         return `${ fxCodeHeader( channels ) }\n${ this._commonCode }\n${ shader }\n${ fxCode }`;
 
     }

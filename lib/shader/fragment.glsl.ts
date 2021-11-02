@@ -13,10 +13,11 @@ layout(binding = ${channel.textureBinding}) uniform texture2D ${channel.name}_te
 `;
 }).join('\n');
 
-return `#version 450
+
+return `#version 460
 precision highp float;
 precision highp int;
-precision highp sampler;
+precision highp sampler2D;
 
 layout(binding = 0, std140) uniform u {
     vec3 iResolution;
