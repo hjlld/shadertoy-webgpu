@@ -10,7 +10,6 @@ However if the author disallow to share his/her work via "public + api", you can
 
 ```
 npm i hiwebgl-shadertoy-webgpu
-
 ```
 
 ## Guide
@@ -20,7 +19,7 @@ npm i hiwebgl-shadertoy-webgpu
 import { Shadertoy } from 'hiwebgl-shadertoy-webgpu';
 
 // 1. Get a root element
-const app = document.querySelector('#app')!;
+const app = document.querySelector( '#app' );
 
 // 2. Use static `Create()` method to get an instance
 const shadertoy = await Shadertoy.Create( app );
@@ -37,7 +36,7 @@ await shadertoy.InitShaderByID( 'Ns3XWf' );
 shadertoy.Render();
 ```
 
-## Features
+## Feature
 
 - [x] Uniforms - iResolution, iTime, iFrame, iChannelResolution, iMouse, iChannel0..3
 - [x] Only one Image buffer
@@ -45,7 +44,7 @@ shadertoy.Render();
 - [x] Texture as input media
 - [x] Sound as input media
 
-## TODOs
+## TODO
 
 - Cubemap and cubemap buffer
 - More uniforms - iTimeDelta, iChannelTime, iDate, iSampleRate
@@ -60,7 +59,7 @@ shadertoy.Render();
 
 ## Known issue
 
-1. Not suport sampler2D as an independent variable. Becasue WGSL doesn't support combined texture with sampler (for now), and GLSL spec disallow use them mixing together, see https://github.com/gpuweb/gpuweb/issues/770 and https://github.com/KhronosGroup/glslang/issues/2746#issuecomment-956192711
+1. Not suport `sampler2D` as an independent variable in any form. Becasue WGSL doesn't support combined texture with sampler (for now), and GLSL spec disallow use them mixing together, see https://github.com/gpuweb/gpuweb/issues/770 and https://github.com/KhronosGroup/glslang/issues/2746#issuecomment-956192711
 
 2. Due to Shadertoy's CORS policy we cannot fetch input media (texture, music...) directly. So before calling InitShaderByID(), you should download it manually. When input media detected, a warning in your browser console should be thrown, just click the media's url, then next call SetInputMedia() to set media resources.
 
