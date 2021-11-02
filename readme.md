@@ -1,6 +1,6 @@
 # Shadertoy-WebGPU
 
-A Shadertoy renderer via WebGPU. 
+A Shadertoy renderer using WebGPU. 
 
 You can render a Shadertoy work only by passing its ID. 
 

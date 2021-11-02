@@ -1,6 +1,7 @@
 {
   "name": "hiwebgl-shadertoy-webgpu",
-  "version": "0.0.5",
+  "version": "0.0.6",
+  "description": "A Shadertoy renderer using WebGPU",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -21,5 +22,9 @@
   ],
   "main": "./dist/Shadertoy.js",
   "module": "./dist/Shadertoy.js",
-  "types": "./dist/Shadertoy.d.ts"
+  "types": "./dist/Shadertoy.d.ts",
+  "keywords": ["webgpu", "shadertoy", "glsl"],
+  "homepage": "https://github.com/hjlld/shadertoy-webgpu",
+  "author": "hjlld aka HiWebGL",
+  "license": "MIT"
 }
