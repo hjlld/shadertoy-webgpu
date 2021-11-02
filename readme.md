@@ -27,7 +27,7 @@ const shadertoy = await Shadertoy.Create( app );
 // 3. Set input media if needed
 
 // Set media url as iChannel0 for Buffer A.
-// shadertoy.SetInputMedia( Shadertoy.RENDERPASS.BUFFER_A, 1, '/media/channel1.jpg'); 
+// shadertoy.SetInputMedia( Shadertoy.RENDERPASS.BUFFER_A, 0, '/media/channel1.jpg'); 
 
 // 4. Init work...
 await shadertoy.InitShaderByID( 'Ns3XWf' );
