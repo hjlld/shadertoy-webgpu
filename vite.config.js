@@ -1,6 +1,7 @@
-const path = require('path');
-const { defineConfig } = require('vite');
+import path from 'path';
+import { defineConfig } from 'vite';
 import typescript from "@rollup/plugin-typescript";
+import resolve from '@rollup/plugin-node-resolve';
 
 module.exports = defineConfig({
   build: {
@@ -10,18 +11,21 @@ module.exports = defineConfig({
       fileName: () => 'Shadertoy.js',
     },
     rollupOptions: {
-      // input: 'lib/Shadertoy.ts',
-      // output: {
-      //   dir: 'dist',
-      // },
-      external: [ path.resolve(__dirname, 'node_modules/@webgpu/glslang/dist/web-devel-onefile/glslang.js')],
+      input: 'lib/Shadertoy.ts',
+      output: {
+        dir: 'dist',
+      },
       plugins: [
+        resolve({
+          moduleDirectories: ['node_modules']
+        }),
         typescript({
           declaration: true,
           declarationDir: path.resolve(__dirname, 'dist'),
-          exclude: [ path.resolve(__dirname, 'node_modules/**'), path.resolve(__dirname, 'src/**') ]
+          exclude: [ 'node_modules', 'src' ]
         })
-      ]
+      ],
+      external: [ "@webgpu/glslang/dist/web-devel-onefile/glslang" ]
     }
   },
 

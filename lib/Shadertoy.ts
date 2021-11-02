@@ -641,7 +641,7 @@ export class Shadertoy {
     
                 });
     
-                console.log(this._ParseShader( code, channels ))
+                //console.log(this._ParseShader( code, channels ))
 
                 const fxModule = this.device.createShaderModule({
     

@@ -1,20 +1,16 @@
 {
   "name": "hiwebgl-shadertoy-webgpu",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "serve": "vite preview",
-    "build-library": "esbuild ./lib/Shadertoy.ts --bundle --external:@webgpu/glslang --minify --format=esm --outfile=./dist/Shadertoy.js"
+    "serve": "vite preview"
   },
   "devDependencies": {
+    "@rollup/plugin-node-resolve": "^13.0.6",
     "@rollup/plugin-typescript": "^8.2.5",
     "typescript": "^4.3.2",
     "vite": "^2.6.4"
-  },
-  "dependencies": {
-    "@webgpu/glslang": "0.0.15",
-    "@webgpu/types": "^0.1.6"
   },
   "peerDependencies": {
     "@webgpu/glslang": "0.0.15",
