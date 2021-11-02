@@ -1,8 +1,8 @@
 import glslangModule, { Glslang } from '@webgpu/glslang/dist/web-devel-onefile/glslang';
-import { fxCodeHeader, fxCodeMain, iChannelOptions } from './shader/fragment.glsl';
+import { fxCode, fxCodeHeader, iChannelOptions } from './shader/fragment.glsl';
 import vxCode from './shader/vertex.wgsl';
 
-type TypedArray = Float32Array | Float64Array | Uint8Array | Uint8ClampedArray | Int8Array | Int16Array | Int32Array;
+type TypedArray = Float32Array | Float64Array | Uint8Array | Uint8ClampedArray | Int8Array | Int16Array | Int32Array | Uint16Array | Uint32Array;
 type ShadertoyRenderpassName = 'Common' | 'Buffer A' | 'Buffer B' | 'Buffer C' | 'Buffer D' | 'Image';
 type BoolString = "true" | "false";
 type ShadertoyRenderpassType = 'common' | 'image' | 'buffer';
@@ -68,12 +68,6 @@ export class Shadertoy {
 
     public format: GPUTextureFormat;
 
-    public bundleEncoders: GPURenderBundleEncoder[];
-
-    public renderBundles: GPURenderBundle[] = [];
-
-    public shadertoyCode: string;
-
     public renderpasses: Map<ShadertoyRenderpassName, renderpassData> = new Map();
 
     public glslCompiler: Glslang;
@@ -130,18 +124,38 @@ export class Shadertoy {
 
     private _iMouseArray: Float32Array = new Float32Array( [ 0, 0, 0, 0 ] );
 
-    private _iFrameArray: Float32Array = new Float32Array( [ 0 ] );
+    private _iFrameArray: Uint32Array = new Uint32Array( [ 0 ] );
 
-    private __iUniformArray: Float32Array;
+    private __iChannelResolutionArray: Float32Array = new Float32Array( { length: 12 } );
 
-    private get _iUniformArray(): Float32Array {
+    private get _iChannelResolutionArray(): Float32Array {
+
+        const width = this.canvas.width;
+        const height = this.canvas.height;
+
+        for ( let i = 0; i < this.__iChannelResolutionArray.length; i += 3 ) {
+
+            this.__iChannelResolutionArray[ i ] = width;
+            this.__iChannelResolutionArray[ i + 1 ] = height;
+            this.__iChannelResolutionArray[ i + 2 ] = width / height;
+
+        }
+        
+        return this.__iChannelResolutionArray;
+
+    }
+
+    private __iUniformArray: Uint8Array;
+
+    private _iUniformArray(): Promise<Uint8Array> {
 
         return this._MergeUniformArrays( 
             
             this._iResolutionArray, 
             this._iTimeArray,
             this._iMouseArray,
-            this._iFrameArray
+            this._iFrameArray,
+            this._iChannelResolutionArray,
 
         );
 
@@ -253,7 +267,9 @@ export class Shadertoy {
 
             if ( !this._uniformBuffer ) {
 
-                this._uniformBuffer = this._CreateGPUBuffer( this._iUniformArray, GPUBufferUsage.UNIFORM );
+                const uniformArray = await this._iUniformArray();
+
+                this._uniformBuffer = this._CreateGPUBuffer( uniformArray, GPUBufferUsage.UNIFORM );
     
             }
 
@@ -304,6 +320,9 @@ export class Shadertoy {
 
                 const code = renderpass.code;
 
+                // some shader only have one Image buffer, they don't have type and outputs property.
+                const outputId = renderpass.outputs.length > 0 ? renderpass.outputs[ 0 ].id : -1;
+
                 let name = renderpass.name;
 
                 const type = renderpass.type;
@@ -332,7 +351,7 @@ export class Shadertoy {
 
                     const originSrc = input.src;
 
-                    console.warn( `Find input media: https://www.shadertoy.com${originSrc}, due to Shadertoy's CORS policy we cannot read it directly. So before calling InitShaderByID(), you should download it (simply click the url) and call SetInputMedia(yourMediaUrl) in sequence to set media resources.`);
+                    console.warn( `Find input media: https://www.shadertoy.com${originSrc}, due to Shadertoy's CORS policy we cannot read it directly. So before calling InitShaderByID(), you should download it manually (simply click the url) and call SetInputMedia() set media resources.`);
 
                     if ( ctype === 'music' ) {
 
@@ -486,6 +505,8 @@ export class Shadertoy {
 
                     } else if ( ctype === 'buffer') {
 
+                        //TODO: support mipmap
+
                         if ( !( [ 'linear', 'nearest' ].includes( input.sampler.filter ) ) ) {
 
                             input.sampler.filter = 'linear';
@@ -620,7 +641,7 @@ export class Shadertoy {
     
                 });
     
-                //console.log(this._ParseShader( code, channels ))
+                console.log(this._ParseShader( code, channels ))
 
                 const fxModule = this.device.createShaderModule({
     
@@ -683,11 +704,11 @@ export class Shadertoy {
 
                     renderTarget = this.context;
 
-                } else if ( this.textures.has( renderpass.outputs[ 0 ] .id ) ) {
+                } else if ( this.textures.has( outputId ) ) {
 
                     renderTarget = this._CreateRenderTarget();
                     
-                    const target = this.textures.get( renderpass.outputs[ 0 ] .id )!;
+                    const target = this.textures.get( outputId )!;
 
                     this.pendingToCopyTextures.set( renderTarget, target );
 
@@ -697,7 +718,7 @@ export class Shadertoy {
 
                 }
 
-                this.renderpasses.set( name, { renderBundle, renderTarget, id: renderpass.outputs[ 0 ].id } );
+                this.renderpasses.set( name, { renderBundle, renderTarget, id: outputId } );
                 
             }
 
@@ -733,7 +754,9 @@ export class Shadertoy {
 
         this._raf = requestAnimationFrame( () => this.Render() );
 
-        this.device.queue.writeBuffer( this._uniformBuffer, 0, this._iUniformArray );
+        const uniformArray = await this._iUniformArray();
+
+        this.device.queue.writeBuffer( this._uniformBuffer, 0, uniformArray );
                 
         let i = 0;
 
@@ -800,28 +823,16 @@ export class Shadertoy {
 
     }
 
-    private _MergeUniformArrays( ...arrays: Float32Array[] ) {
+    private async _MergeUniformArrays( ...arrays: TypedArray[] ): Promise<Uint8Array> {
 
-        const length = arrays.reduce( ( pre: number, cur: Float32Array ) => {
+        const blob = new Blob( arrays );
 
-            return pre + cur.length;
+        const res = new Response( blob );
 
-        }, 0 );
+        const buffer = await res.arrayBuffer();
 
-        if ( !this.__iUniformArray || this.__iUniformArray.length !== length ) {
+        this.__iUniformArray = new Uint8Array( buffer );
 
-            this.__iUniformArray = new Float32Array( { length } );
-
-        }
-
-        arrays.reduce( ( offset: number, cur: Float32Array ) => {
-
-            this.__iUniformArray.set( cur, offset );
-
-            return offset + cur.length;
-
-        }, 0 );
-        
         return this.__iUniformArray;
 
     }
@@ -918,7 +929,7 @@ export class Shadertoy {
 
         });
 
-        return `${ fxCodeHeader( channels ) }${ this._commonCode }${ shader }\n${ fxCodeMain() }`;
+        return `${ fxCodeHeader( channels ) }\n${ this._commonCode }\n${ shader }\n${ fxCode }`;
 
     }
 
